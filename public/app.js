@@ -1,5 +1,25 @@
-// This will use the demo backend if you open index.html locally via file://, otherwise your server will be used
-let backendUrl = location.protocol === 'file:' ? "https://tiktok-chat-reader.zerody.one/" : undefined;
+// Use custom ?backend= URL if provided, fallback to demo backend on static hosts (file:// or GitHub Pages), otherwise use same-origin server
+function resolveBackendUrl() {
+    const customBackend = new URLSearchParams(location.search).get('backend');
+    if (customBackend) {
+        try {
+            const parsed = new URL(customBackend);
+            if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+                return parsed.href;
+            }
+        } catch (_) {
+            console.warn('Invalid backend URL parameter ignored:', customBackend);
+        }
+    }
+
+    if (location.protocol === 'file:' || location.hostname.endsWith('.github.io')) {
+        return 'https://tiktok-chat-reader.zerody.one/';
+    }
+
+    return undefined;
+}
+
+let backendUrl = resolveBackendUrl();
 let connection = new TikTokIOConnection(backendUrl);
 
 // Counter
