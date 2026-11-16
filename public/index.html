@@ -47,17 +47,22 @@
         let captchaCallback = null;
         let captchaWidgetId = null;
 
-        // Load recaptcha config and script
-        fetch('/recaptcha-config').then(r => r.json()).then(config => {
-            if (!config.enabled || !config.siteKey) return;
-            recaptchaSiteKey = config.siteKey;
+        // Load recaptcha config and script (only when served by the same-origin backend)
+        if (!backendUrl) {
+            fetch('recaptcha-config')
+                .then(r => (r.ok ? r.json() : null))
+                .then(config => {
+                    if (!config || !config.enabled || !config.siteKey) return;
+                    recaptchaSiteKey = config.siteKey;
 
-            const script = document.createElement('script');
-            script.src = 'https://www.google.com/recaptcha/api.js?onload=onRecaptchaLoad&render=explicit';
-            script.async = true;
-            script.defer = true;
-            document.head.appendChild(script);
-        });
+                    const script = document.createElement('script');
+                    script.src = 'https://www.google.com/recaptcha/api.js?onload=onRecaptchaLoad&render=explicit';
+                    script.async = true;
+                    script.defer = true;
+                    document.head.appendChild(script);
+                })
+                .catch(() => {});
+        }
 
         function onRecaptchaLoad() {
             captchaWidgetId = grecaptcha.render('recaptchaWidget', {
@@ -108,25 +113,32 @@
             }
 
             showCaptcha(async (recaptchaToken) => {
-                let tokenParam = '';
+                let extraParams = '';
 
-                if (recaptchaToken) {
+                if (recaptchaToken && !backendUrl) {
                     try {
-                        const res = await fetch('/generate-overlay-token', {
+                        const res = await fetch('generate-overlay-token', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ recaptchaToken })
                         });
-                        const data = await res.json();
-                        if (data.token) {
-                            tokenParam = `&token=${data.token}`;
+                        if (res.ok) {
+                            const data = await res.json();
+                            if (data.token) {
+                                extraParams += `&token=${encodeURIComponent(data.token)}`;
+                            }
                         }
                     } catch (err) {
                         console.error('Failed to generate overlay token:', err);
                     }
                 }
 
-                let url = `/obs.html?username=${username}&showLikes=1&showChats=1&showGifts=1&showFollows=1&showJoins=1&bgColor=rgb(24,23,28)&fontColor=rgb(227,229,235)&fontSize=1.3em${tokenParam}`;
+                const customBackend = new URLSearchParams(location.search).get('backend');
+                if (customBackend && backendUrl) {
+                    extraParams += `&backend=${encodeURIComponent(backendUrl)}`;
+                }
+
+                let url = `obs.html?username=${encodeURIComponent(username)}&showLikes=1&showChats=1&showGifts=1&showFollows=1&showJoins=1&bgColor=rgb(24,23,28)&fontColor=rgb(227,229,235)&fontSize=1.3em${extraParams}`;
                 window.open(url, '_blank');
             });
         }
