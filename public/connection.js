@@ -4,65 +4,137 @@
  */
 class TikTokIOConnection {
     constructor(backendUrl) {
-        this.socket = io(backendUrl);
+        this.backendUrl = backendUrl;
+        // forceNew keeps a dedicated Socket.IO manager per wrapper instance, so switching
+        // backends (destroy + new) never reuses listeners/handlers from the previous server.
+        this.socket = io(backendUrl, { forceNew: true });
         this.uniqueId = null;
         this.options = null;
+        this.isConnected = false;
+        this._connectTimeout = null;
+        this._pendingSocketConnect = null;
+        this._pendingOnConnected = null;
+        this._pendingOnDisconnected = null;
 
         this.socket.on('connect', () => {
             console.info("Socket connected!");
 
-            // Reconnect to streamer if uniqueId already set (socket.io transport reconnect)
-            if (this.uniqueId) {
+            // Reconnect to streamer only if previously connected (socket.io transport reconnect)
+            if (this.uniqueId && this.isConnected) {
                 this.socket.emit('setUniqueId', this.uniqueId, this.options);
             }
-        })
+        });
 
-        this.socket.on('disconnect', () => console.warn("Socket disconnected!"))
+        this.socket.on('disconnect', () => {
+            console.warn("Socket disconnected!");
+        });
 
         this.socket.on('streamEnd', () => {
             console.warn("LIVE has ended!");
             this.uniqueId = null;
-        })
+            this.isConnected = false;
+        });
 
         this.socket.on('tiktokDisconnected', (errMsg) => {
-            console.warn(errMsg);
-            if (errMsg && errMsg.includes('LIVE has ended')) {
-                this.uniqueId = null;
-            }
+            this._handleTikTokDisconnected(errMsg);
         });
+    }
+
+    _handleTikTokDisconnected(errMsg) {
+        console.warn(errMsg);
+
+        // The TikTok connection is gone (failed, ended, or rejected). Clear the state so a
+        // later Socket.IO transport reconnect does not blindly re-emit setUniqueId and trigger
+        // an endless error loop (e.g. reCAPTCHA rejections or ended LIVE streams).
+        this.uniqueId = null;
+        this.isConnected = false;
+    }
+
+    _clearPendingConnect() {
+        if (this._connectTimeout) {
+            clearTimeout(this._connectTimeout);
+            this._connectTimeout = null;
+        }
+        if (this._pendingSocketConnect) {
+            this.socket.off('connect', this._pendingSocketConnect);
+            this._pendingSocketConnect = null;
+        }
+        if (this._pendingOnConnected) {
+            this.socket.off('tiktokConnected', this._pendingOnConnected);
+            this._pendingOnConnected = null;
+        }
+        if (this._pendingOnDisconnected) {
+            this.socket.off('tiktokDisconnected', this._pendingOnDisconnected);
+            this._pendingOnDisconnected = null;
+        }
     }
 
     connect(uniqueId, options) {
+        this._clearPendingConnect();
+
         this.uniqueId = uniqueId;
-        this.options = options || {};
+        const emitOptions = Object.assign({}, options || {});
 
-        // Clean up stale listeners from any previous connect() call
-        this.socket.off('tiktokConnected');
-        this.socket.off('tiktokDisconnected');
-
-        // Re-add the permanent tiktokDisconnected handler
-        this.socket.on('tiktokDisconnected', (errMsg) => {
-            console.warn(errMsg);
-            if (errMsg && errMsg.includes('LIVE has ended')) {
-                this.uniqueId = null;
-            }
-        });
-
-        this.socket.emit('setUniqueId', this.uniqueId, this.options);
+        // Keep reusable options (e.g. bypassToken) for transport reconnects,
+        // but never resend a single-use recaptchaToken.
+        const persistedOptions = Object.assign({}, emitOptions);
+        delete persistedOptions.recaptchaToken;
+        this.options = persistedOptions;
+        this.isConnected = false;
 
         return new Promise((resolve, reject) => {
-            this.socket.once('tiktokConnected', resolve);
-            this.socket.once('tiktokDisconnected', reject);
+            this._pendingOnConnected = (state) => {
+                this._clearPendingConnect();
+                this.isConnected = true;
+                resolve(state);
+            };
 
-            setTimeout(() => {
+            this._pendingOnDisconnected = (errMsg) => {
+                this._clearPendingConnect();
+                this.uniqueId = null;
+                this.isConnected = false;
+                reject(errMsg);
+            };
+
+            this.socket.once('tiktokConnected', this._pendingOnConnected);
+            this.socket.once('tiktokDisconnected', this._pendingOnDisconnected);
+
+            this._connectTimeout = setTimeout(() => {
+                this._clearPendingConnect();
+                if (!this.isConnected) {
+                    this.uniqueId = null;
+                }
                 reject('Connection Timeout');
-            }, 15000)
-        })
+            }, 15000);
+
+            if (this.socket.connected) {
+                this.socket.emit('setUniqueId', this.uniqueId, emitOptions);
+            } else {
+                this._pendingSocketConnect = () => {
+                    this._pendingSocketConnect = null;
+                    if (this.uniqueId === uniqueId && !this.isConnected) {
+                        this.socket.emit('setUniqueId', this.uniqueId, emitOptions);
+                    }
+                };
+                this.socket.once('connect', this._pendingSocketConnect);
+                this.socket.connect();
+            }
+        });
     }
 
     disconnect() {
+        this._clearPendingConnect();
         this.uniqueId = null;
-        this.socket.emit('disconnect_tiktok');
+        this.isConnected = false;
+        if (this.socket.connected) {
+            this.socket.emit('disconnect_tiktok');
+        }
+    }
+
+    destroy() {
+        this.disconnect();
+        this.socket.removeAllListeners();
+        this.socket.close();
     }
 
     on(eventName, eventHandler) {

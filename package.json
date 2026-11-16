@@ -1,9 +1,19 @@
 {
+  "name": "tiktok-chat-reader",
+  "version": "1.0.0",
+  "description": "TikTok LIVE Chat Reader using TikTok-Live-Connector and Socket.IO",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "dependencies": {
     "dotenv": "^16.0.0",
     "express": "^4.17.2",
     "node-cache": "^5.1.2",
     "socket.io": "^4.4.1",
-    "tiktok-live-connector": "^2.1.1-beta1"
+    "tiktok-live-connector": "2.1.1-beta1"
   }
 }
