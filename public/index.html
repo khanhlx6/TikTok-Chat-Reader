@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TikTok LIVE Chat Reader (Demo)</title>
+    <title>TikTok LIVE Chat Reader</title>
 
     <meta name="description"
           content="A chat reader for TikTok LIVE utilizing TikTok-Live-Connector and Socket.IO to forward the data to the client. This demo project uses the unofficial TikTok API to retrieve chat comments, gifts and other events from TikTok LIVE.">
@@ -17,9 +17,6 @@
             referrerpolicy="no-referrer"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.4.1/socket.io.min.js" crossorigin="anonymous"
             referrerpolicy="no-referrer"></script>
-
-    <script src="connection.js"></script>
-    <script src="app.js"></script>
 
     <style>
         .captcha-overlay {
@@ -46,25 +43,43 @@
         let recaptchaSiteKey = null;
         let captchaCallback = null;
         let captchaWidgetId = null;
+        let recaptchaScriptLoaded = false;
 
-        // Load recaptcha config and script (only when served by the same-origin backend)
-        if (!backendUrl) {
-            fetch('recaptcha-config')
+        function getApiUrl(endpoint) {
+            return backendUrl ? new URL(endpoint, backendUrl).href : endpoint;
+        }
+
+        // Load reCAPTCHA config when served by same-origin or a custom self-hosted backend.
+        // Skip on the third-party demo backend (domain-locked key, no CORS on HTTP endpoints).
+        function loadRecaptchaConfig() {
+            recaptchaSiteKey = null;
+
+            if (typeof isDemoBackend === 'function' && isDemoBackend(backendUrl)) {
+                return;
+            }
+
+            fetch(getApiUrl('recaptcha-config'))
                 .then(r => (r.ok ? r.json() : null))
                 .then(config => {
                     if (!config || !config.enabled || !config.siteKey) return;
                     recaptchaSiteKey = config.siteKey;
 
-                    const script = document.createElement('script');
-                    script.src = 'https://www.google.com/recaptcha/api.js?onload=onRecaptchaLoad&render=explicit';
-                    script.async = true;
-                    script.defer = true;
-                    document.head.appendChild(script);
+                    if (!recaptchaScriptLoaded) {
+                        recaptchaScriptLoaded = true;
+                        const script = document.createElement('script');
+                        script.src = 'https://www.google.com/recaptcha/api.js?onload=onRecaptchaLoad&render=explicit';
+                        script.async = true;
+                        script.defer = true;
+                        document.head.appendChild(script);
+                    } else if (typeof grecaptcha !== 'undefined' && captchaWidgetId === null) {
+                        onRecaptchaLoad();
+                    }
                 })
                 .catch(() => {});
         }
 
         function onRecaptchaLoad() {
+            if (!recaptchaSiteKey) return;
             captchaWidgetId = grecaptcha.render('recaptchaWidget', {
                 sitekey: recaptchaSiteKey,
                 callback: onCaptchaSolved
@@ -80,8 +95,8 @@
         }
 
         function showCaptcha(callback) {
-            if (!recaptchaSiteKey) {
-                // reCAPTCHA not configured, skip
+            if (!recaptchaSiteKey || resolveBypassToken()) {
+                // reCAPTCHA not configured or bypass token already set, skip popup
                 callback(null);
                 return;
             }
@@ -104,9 +119,117 @@
             });
         }
 
+        // Inform static-host users that the public demo backend needs a captcha/bypass token
+        function updateSetupBanner() {
+            const $banner = $('#setupBanner');
+            if (!$banner.length) return;
+
+            const needsSetup = typeof isStaticHost === 'function' && isStaticHost()
+                && typeof isDemoBackend === 'function' && isDemoBackend(backendUrl)
+                && !resolveBypassToken()
+                && !safeStorageGet('hideSetupBanner');
+
+            $banner.toggle(needsSetup);
+        }
+
+        function dismissSetupBanner() {
+            safeStorageSet('hideSetupBanner', '1');
+            $('#setupBanner').hide();
+        }
+
+        // Server settings panel controls
+        function initServerSettingsUI() {
+            const customBackend = new URLSearchParams(location.search).get('backend') || safeStorageGet('backendUrl') || '';
+            const savedToken = resolveBypassToken();
+            $('#backendUrlInput').val(customBackend);
+            $('#bypassTokenInput').val(savedToken);
+            updateServerHint('');
+            updateSetupBanner();
+        }
+
+        function toggleServerSettings() {
+            $('#serverSettingsPanel').toggleClass('open');
+        }
+
+        function openServerSettings() {
+            $('#serverSettingsPanel').addClass('open');
+        }
+
+        function updateServerHint(message, isError) {
+            const $hint = $('#serverSettingsStatus');
+            $hint.text(message).toggleClass('error', Boolean(isError));
+        }
+
+        function saveServerSettings() {
+            const rawBackend = $('#backendUrlInput').val().trim();
+            const rawToken = $('#bypassTokenInput').val().trim();
+
+            let normalized = null;
+            if (rawBackend) {
+                normalized = normalizeBackendUrl(rawBackend);
+                if (!normalized) {
+                    updateServerHint('Backend URL không hợp lệ (ví dụ: https://your-app.onrender.com hoặc http://localhost:8081).', true);
+                    return;
+                }
+
+                const parsed = new URL(normalized);
+                const isLocalHost = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1';
+                if (location.protocol === 'https:' && parsed.protocol === 'http:' && !isLocalHost) {
+                    updateServerHint('Trang HTTPS yêu cầu Backend URL dùng https:// (trừ http://localhost).', true);
+                    return;
+                }
+            }
+
+            const token = extractBypassToken(rawToken);
+            safeStorageSet('backendUrl', normalized);
+            safeStorageSet('bypassToken', token);
+
+            $('#backendUrlInput').val(normalized || '');
+            $('#bypassTokenInput').val(token);
+
+            // Clear overridden URL params if user explicitly updates settings
+            if (location.search) {
+                const params = new URLSearchParams(location.search);
+                if (params.has('backend') || params.has('token')) {
+                    params.delete('backend');
+                    params.delete('token');
+                    const nextQuery = params.toString();
+                    history.replaceState(null, '', location.pathname + (nextQuery ? '?' + nextQuery : ''));
+                }
+            }
+
+            const effectiveBackend = resolveBackendUrl();
+            initConnection(effectiveBackend);
+            $('#stateText').text('');
+            openServerSettings();
+            updateServerHint(`Đã lưu! Đang dùng server: ${getBackendLabel(effectiveBackend)}${token ? ' (kèm bypass token)' : ''}`, false);
+            updateSetupBanner();
+        }
+
+        function resetServerSettings() {
+            safeStorageSet('backendUrl', null);
+            safeStorageSet('bypassToken', null);
+            $('#backendUrlInput').val('');
+            $('#bypassTokenInput').val('');
+
+            if (location.search) {
+                const params = new URLSearchParams(location.search);
+                params.delete('backend');
+                params.delete('token');
+                const nextQuery = params.toString();
+                history.replaceState(null, '', location.pathname + (nextQuery ? '?' + nextQuery : ''));
+            }
+
+            const effectiveBackend = resolveBackendUrl();
+            initConnection(effectiveBackend);
+            openServerSettings();
+            updateServerHint(`Đã đặt lại về mặc định: ${getBackendLabel(effectiveBackend)}`, false);
+            updateSetupBanner();
+        }
+
         // Generate overlay with captcha
         function generateOverlay() {
-            let username = $('#uniqueIdInput').val();
+            let username = ($('#uniqueIdInput').val() || '').trim().replace(/^@+/, '');
             if (!username) {
                 alert("Enter username");
                 return;
@@ -114,10 +237,11 @@
 
             showCaptcha(async (recaptchaToken) => {
                 let extraParams = '';
+                let overlayToken = resolveBypassToken();
 
-                if (recaptchaToken && !backendUrl) {
+                if (recaptchaToken && !(typeof isDemoBackend === 'function' && isDemoBackend(backendUrl))) {
                     try {
-                        const res = await fetch('generate-overlay-token', {
+                        const res = await fetch(getApiUrl('generate-overlay-token'), {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ recaptchaToken })
@@ -125,7 +249,7 @@
                         if (res.ok) {
                             const data = await res.json();
                             if (data.token) {
-                                extraParams += `&token=${encodeURIComponent(data.token)}`;
+                                overlayToken = data.token;
                             }
                         }
                     } catch (err) {
@@ -133,9 +257,20 @@
                     }
                 }
 
-                const customBackend = new URLSearchParams(location.search).get('backend');
-                if (customBackend && backendUrl) {
-                    extraParams += `&backend=${encodeURIComponent(backendUrl)}`;
+                if (overlayToken) {
+                    extraParams += `&token=${encodeURIComponent(overlayToken)}`;
+                }
+
+                // Forward the effective backend so the overlay connects to the same server
+                // (skip when the overlay and this page are already on the same host).
+                if (backendUrl) {
+                    let differentHost = true;
+                    try {
+                        differentHost = new URL(backendUrl).host !== location.host;
+                    } catch (_) {}
+                    if (differentHost) {
+                        extraParams += `&backend=${encodeURIComponent(backendUrl)}`;
+                    }
                 }
 
                 let url = `obs.html?username=${encodeURIComponent(username)}&showLikes=1&showChats=1&showGifts=1&showFollows=1&showJoins=1&bgColor=rgb(24,23,28)&fontColor=rgb(227,229,235)&fontSize=1.3em${extraParams}`;
@@ -143,11 +278,14 @@
             });
         }
     </script>
+
+    <script src="connection.js"></script>
+    <script src="app.js"></script>
 </head>
 <body>
 <div class="head">
     <h1>TikTok LIVE Chat Reader</h1>
-    <span class="subTitle">Source: <a href="https://github.com/zerodytrash/TikTok-Chat-Reader">https://github.com/zerodytrash/TikTok-Chat-Reader</a></span>
+    <span class="subTitle">Source: <a href="https://github.com/khanhlx6/TikTok-Chat-Reader" target="_blank" rel="noopener">https://github.com/khanhlx6/TikTok-Chat-Reader</a></span>
 </div>
 
 <div>
@@ -159,10 +297,42 @@
 
 <div class="inputFields">
     <p>Enter the <b>@username</b> of a user who is currently live:</p>
-    <input type="text" id="uniqueIdInput">
+    <input type="text" id="uniqueIdInput" placeholder="username">
     <input type="button" id="connectButton" value="Connect">
     <input type="button" id="disconnectButton" class="disconnect" value="Disconnect" style="display:none">
-    <a href="#" onclick="generateOverlay()">Generate Overlay URL</a>
+    <a href="#" onclick="generateOverlay(); return false;">Generate Overlay URL</a>
+    <button type="button" class="serverbtn" id="serverToggleBtn" onclick="toggleServerSettings()">Server</button>
+</div>
+
+<div id="setupBanner" class="setupbanner" style="display:none">
+    <b>Chưa cấu hình backend riêng.</b>
+    Trang này đang dùng demo server <code>tiktok-chat-reader.zerody.one</code>, server này bắt buộc reCAPTCHA khoá theo domain riêng nên sẽ báo
+    <code>reCAPTCHA verification required.</code>
+    Hãy mở <b>Server</b> để nhập Backend URL tự host (không cần captcha) hoặc dán Overlay Token 24h.
+    <button type="button" class="bannerbtn" onclick="openServerSettings()">Cấu hình ngay</button>
+    <button type="button" class="bannerclose" title="Ẩn thông báo" onclick="dismissSetupBanner()">&times;</button>
+</div>
+
+<div id="serverSettingsPanel" class="serversettings">
+    <div class="serversettings-row">
+        <label class="serversettings-field">
+            <span>Backend Server URL (khuyên dùng — tự host <code>server.js</code>, không cần reCAPTCHA):</span>
+            <input type="text" id="backendUrlInput" placeholder="https://your-backend.onrender.com hoặc http://localhost:8081">
+        </label>
+        <label class="serversettings-field">
+            <span>Hoặc Overlay Bypass Token (hiệu lực 24h nếu dùng <code>tiktok-chat-reader.zerody.one</code>):</span>
+            <input type="text" id="bypassTokenInput" placeholder="Dán Overlay URL hoặc giá trị token= từ zerody.one">
+        </label>
+    </div>
+    <div class="serversettings-actions">
+        <button type="button" class="savebtn" onclick="saveServerSettings()">Save Server</button>
+        <button type="button" class="downloadbtn" onclick="resetServerSettings()">Reset</button>
+        <span class="serversettings-help">
+            Mẹo nhanh: mở <a href="https://tiktok-chat-reader.zerody.one/" target="_blank" rel="noopener">zerody.one</a> → nhập username bất kỳ → bấm <b>Generate Overlay URL</b> → giải captcha → copy URL tab mới dán vào ô Token.
+            Để dùng lâu dài không cần captcha, deploy <code>server.js</code> lên <a href="https://dashboard.render.com/blueprint/new?repo=https://github.com/khanhlx6/TikTok-Chat-Reader" target="_blank" rel="noopener">Render (1-click)</a> hoặc chạy <code>npm i &amp;&amp; npm start</code>.
+        </span>
+    </div>
+    <div id="serverSettingsStatus" class="serversettings-status"></div>
 </div>
 
 <div class="splitstatebar">

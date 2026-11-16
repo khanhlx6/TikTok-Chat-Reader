@@ -16,6 +16,18 @@ if (process.env.API_KEY) {
 
 const app = express();
 const httpServer = createServer(app);
+const corsOrigin = process.env.CORS_ORIGIN || '*';
+
+// Allow cross-origin frontend deployments (e.g. GitHub Pages) to call HTTP endpoints
+app.use((req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', corsOrigin);
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    if (req.method === 'OPTIONS') {
+        return res.sendStatus(204);
+    }
+    next();
+});
 
 // Bypass token cache (tokens valid for 24 hours)
 const bypassTokens = new NodeCache({ stdTTL: 86400 });
@@ -23,7 +35,7 @@ const bypassTokens = new NodeCache({ stdTTL: 86400 });
 // Enable cross-origin resource sharing
 const io = new Server(httpServer, {
     cors: {
-        origin: '*'
+        origin: corsOrigin
     }
 });
 
@@ -144,6 +156,11 @@ setInterval(() => {
     io.emit('statistic', {globalConnectionCount: getGlobalConnectionCount()});
 }, 5000)
 
+// Health check endpoint for cloud hosting providers
+app.get('/health', (req, res) => {
+    res.json({ status: 'ok' });
+});
+
 // reCAPTCHA config endpoint
 app.get('/recaptcha-config', (req, res) => {
     res.json({
@@ -183,5 +200,6 @@ app.use(express.static('public'));
 
 // Start http listener
 const port = process.env.PORT || 8081;
-httpServer.listen(port);
+const host = process.env.HOST || '0.0.0.0';
+httpServer.listen(port, host);
 console.info(`Server running! Please visit http://localhost:${port}`);
