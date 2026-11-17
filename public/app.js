@@ -121,6 +121,9 @@ let isConnected = false;
 let backendUrl = resolveBackendUrl();
 let connection = null;
 
+// Socket.IO client options that survive backend switches (e.g. WebSocket-only mode on Vercel)
+let lastSocketOptions = null;
+
 function getBackendLabel(url) {
     if (!url) return location.host || 'same-origin';
     try {
@@ -144,7 +147,20 @@ function updateServerBadge(socketState) {
 function bindConnectionEvents(conn) {
     conn.on('connect', () => updateServerBadge('connected'));
     conn.on('disconnect', () => updateServerBadge('disconnected'));
-    conn.on('connect_error', () => updateServerBadge('error'));
+    conn.on('connect_error', (err) => {
+        updateServerBadge('error');
+
+        // Serverless hosts (e.g. Vercel) cannot answer the HTTP long-polling handshake,
+        // but they do support WebSockets. Retry once over WebSocket only.
+        if (!conn.websocketOnly && isFunctionEndpointError(err)) {
+            console.warn('Polling handshake failed, retrying with WebSocket transport only');
+            conn.useWebSocketOnly();
+            if (isConnected || window.settings.username) {
+                setButtonState('connecting');
+                setTimeout(connect, 300);
+            }
+        }
+    });
 
     // viewer stats
     conn.on('roomUser', (msg) => {
@@ -250,6 +266,14 @@ function bindConnectionEvents(conn) {
     });
 }
 
+// Socket.IO reports "xhr poll error" (or a generic transport error) when the polling
+// handshake is answered by something that is not a long-lived Socket.IO server.
+function isFunctionEndpointError(err) {
+    const text = String((err && (err.message || err.description)) || err || '').toLowerCase();
+    if (!text) return false;
+    return text.includes('xhr') || text.includes('poll') || text.includes('transport') || text.includes('timeout');
+}
+
 function initConnection(nextBackendUrl) {
     if (connection) {
         connection.destroy();
@@ -258,11 +282,19 @@ function initConnection(nextBackendUrl) {
     setButtonState('idle');
     backendUrl = nextBackendUrl;
     updateServerBadge('connecting');
-    connection = new TikTokIOConnection(backendUrl);
+    connection = new TikTokIOConnection(backendUrl, lastSocketOptions);
     bindConnectionEvents(connection);
 
     if (typeof loadRecaptchaConfig === 'function') {
         loadRecaptchaConfig();
+    }
+
+    const originalUseWsOnly = connection.useWebSocketOnly ? connection.useWebSocketOnly.bind(connection) : null;
+    if (originalUseWsOnly) {
+        connection.useWebSocketOnly = () => {
+            originalUseWsOnly();
+            lastSocketOptions = { transports: ['websocket'] };
+        };
     }
 }
 

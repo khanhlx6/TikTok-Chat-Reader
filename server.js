@@ -198,8 +198,28 @@ app.post('/generate-overlay-token', express.json(), async (req, res) => {
 // Serve frontend files
 app.use(express.static('public'));
 
-// Start http listener
-const port = process.env.PORT || 8081;
-const host = process.env.HOST || '0.0.0.0';
-httpServer.listen(port, host);
-console.info(`Server running! Please visit http://localhost:${port}`);
+// Start http listener (skipped when the module is imported, e.g. by api/index.js on Vercel)
+function startServer() {
+    const port = process.env.PORT || 8081;
+    const host = process.env.HOST || '0.0.0.0';
+    httpServer.listen(port, host);
+    console.info(`Server running! Please visit http://localhost:${port}`);
+    return httpServer;
+}
+
+if (require.main === module) {
+    startServer();
+}
+
+function shutdown(signal) {
+    console.info(`${signal} received, closing server`);
+    io.close();
+    httpServer.close(() => process.exit(0));
+    // Force exit if open sockets keep the server alive
+    setTimeout(() => process.exit(0), 5000).unref();
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
+
+module.exports = { app, httpServer, io, startServer };

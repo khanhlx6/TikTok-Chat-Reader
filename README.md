@@ -28,6 +28,15 @@ GitHub Pages (`https://khanhlx6.github.io/TikTok-Chat-Reader/`) hosts the static
 2. Open `https://khanhlx6.github.io/TikTok-Chat-Reader/`, click **Server**, paste your backend URL (e.g. `https://tiktok-chat-reader-backend.onrender.com`), and click **Save Server** — or pass `?backend=https://your-backend-url` in the URL.
 3. To make all visitors use your backend automatically, set `DEFAULT_STATIC_BACKEND_URL` at the top of `public/app.js` to your deployed backend URL.
 
+### Vercel
+
+The repository also ships a Vercel setup (`vercel.json` + `api/index.js`), so the same code serves the frontend **and** the Socket.IO backend from one origin:
+
+1. Import <https://github.com/khanhlx6/TikTok-Chat-Reader> in Vercel (framework preset: **Other**, no build command needed).
+2. Deploy. Open the deployment URL — the page talks to `/socket.io` on the same host, so no captcha and no backend setting is required.
+
+Vercel caveats: WebSockets require Fluid compute and a connection is closed when the function hits its max duration (300 s on Hobby), so long OBS sessions reconnect periodically. For always-on overlays use Render, a VPS or the Docker image.
+
 ### Docker
 
 ```bash
