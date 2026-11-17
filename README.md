@@ -30,12 +30,15 @@ GitHub Pages (`https://khanhlx6.github.io/TikTok-Chat-Reader/`) hosts the static
 
 ### Vercel
 
-The repository also ships a Vercel setup (`vercel.json` + `api/index.js`), so the same code serves the frontend **and** the Socket.IO backend from one origin:
+`vercel.json` lets Vercel serve the frontend **and** the Socket.IO backend from one origin, so the page uses its own `/socket.io` endpoint and needs no captcha and no backend URL:
 
-1. Import <https://github.com/khanhlx6/TikTok-Chat-Reader> in Vercel (framework preset: **Other**, no build command needed).
-2. Deploy. Open the deployment URL — the page talks to `/socket.io` on the same host, so no captcha and no backend setting is required.
+1. Import <https://github.com/khanhlx6/TikTok-Chat-Reader> in Vercel. The Node/Express preset is detected automatically (`server.js` calls `app.listen`, which Vercel runs as a Function); static files are served from `public/`.
+2. **Turn off Deployment Protection**: Project → *Settings* → *Deployment Protection* → *Vercel Authentication* → **Disabled**. Otherwise every request (including `/socket.io`) is redirected to the Vercel login page, and the page fails to connect.
+3. Open the production URL (e.g. `https://tiktok-chat-reader-khanh-lx-6.vercel.app/`) — the top bar shows `Server: <host>` and the connection works without reCAPTCHA.
 
-Vercel caveats: WebSockets require Fluid compute and a connection is closed when the function hits its max duration (300 s on Hobby), so long OBS sessions reconnect periodically. For always-on overlays use Render, a VPS or the Docker image.
+Optional environment variables (Project → *Settings* → *Environment Variables*): `API_KEY` (Euler Stream), `SESSIONID`, `ENABLE_RATE_LIMIT`, `RECAPTCHA_SITE_KEY` / `RECAPTCHA_SECRET_KEY`, `CORS_ORIGIN`.
+
+Vercel caveats: WebSockets need Fluid compute (default on new projects), the polling transport is not available so the frontend automatically switches to WebSocket-only, and a connection is closed when the function reaches its max duration (300 s on Hobby) — the client then reconnects automatically. For always-on OBS overlays use Render, a VPS or the Docker image.
 
 ### Docker
 
