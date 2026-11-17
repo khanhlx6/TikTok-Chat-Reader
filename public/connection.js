@@ -3,11 +3,11 @@
  * With reconnect functionality.
  */
 class TikTokIOConnection {
-    constructor(backendUrl) {
+    constructor(backendUrl, socketOptions) {
         this.backendUrl = backendUrl;
         // forceNew keeps a dedicated Socket.IO manager per wrapper instance, so switching
         // backends (destroy + new) never reuses listeners/handlers from the previous server.
-        this.socket = io(backendUrl, { forceNew: true });
+        this.socket = io(backendUrl, Object.assign({ forceNew: true }, socketOptions || {}));
         this.uniqueId = null;
         this.options = null;
         this.isConnected = false;
@@ -66,6 +66,25 @@ class TikTokIOConnection {
         if (this._pendingOnDisconnected) {
             this.socket.off('tiktokDisconnected', this._pendingOnDisconnected);
             this._pendingOnDisconnected = null;
+        }
+    }
+
+    /**
+     * Upgrade to a WebSocket-only transport. Used when the backend reports that the
+     * Socket.IO path is served by a function endpoint (e.g. Vercel) that cannot answer
+     * the HTTP long-polling handshake. Reconnect is handled by our own logic.
+     */
+    useWebSocketOnly() {
+        if (this.websocketOnly) return;
+        this.websocketOnly = true;
+
+        // Patch both the manager and the Engine.IO client: the engine keeps its own copy of
+        // the transport list, so updating opts alone would not stop the polling attempts.
+        this.socket.io.opts.transports = ['websocket'];
+        this.socket.io.opts.reconnection = false;
+        if (this.socket.io.engine) {
+            this.socket.io.engine.transports = ['websocket'];
+            this.socket.io.engine.opts.transports = ['websocket'];
         }
     }
 
