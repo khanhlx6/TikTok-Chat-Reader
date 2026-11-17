@@ -1,18 +1,5 @@
 {
     "$schema": "https://openapi.vercel.sh/vercel.json",
     "version": 2,
-    "outputDirectory": "public",
-    "functions": {
-        "api/index.js": {
-            "maxDuration": 300,
-            "includeFiles": "{server.js,connectionWrapper.js,limiter.js}"
-        }
-    },
-    "rewrites": [
-        { "source": "/health", "destination": "/api/index" },
-        { "source": "/recaptcha-config", "destination": "/api/index" },
-        { "source": "/generate-overlay-token", "destination": "/api/index" },
-        { "source": "/socket.io", "destination": "/api/index" },
-        { "source": "/socket.io/(.*)", "destination": "/api/index" }
-    ]
+    "outputDirectory": "public"
 }

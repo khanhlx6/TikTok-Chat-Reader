@@ -207,7 +207,9 @@ function startServer() {
     return httpServer;
 }
 
-if (require.main === module) {
+// Vercel's Node/Express presets detect the app either via a default export or by a port
+// listener. Listening here keeps WebSocket upgrades (Socket.IO) working on Vercel as well.
+if (require.main === module || process.env.VERCEL) {
     startServer();
 }
 
@@ -222,4 +224,11 @@ function shutdown(signal) {
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
-module.exports = { app, httpServer, io, startServer };
+// Export the HTTP server as the module value so hosts that treat server.js as the
+// application entrypoint (e.g. Vercel's Express/Node preset) get a real handler that
+// also supports WebSocket upgrades. Extra members stay available for api/index.js.
+module.exports = httpServer;
+module.exports.app = app;
+module.exports.httpServer = httpServer;
+module.exports.io = io;
+module.exports.startServer = startServer;
