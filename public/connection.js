@@ -81,7 +81,6 @@ class TikTokIOConnection {
         // Patch both the manager and the Engine.IO client: the engine keeps its own copy of
         // the transport list, so updating opts alone would not stop the polling attempts.
         this.socket.io.opts.transports = ['websocket'];
-        this.socket.io.opts.reconnection = false;
         if (this.socket.io.engine) {
             this.socket.io.engine.transports = ['websocket'];
             this.socket.io.engine.opts.transports = ['websocket'];
